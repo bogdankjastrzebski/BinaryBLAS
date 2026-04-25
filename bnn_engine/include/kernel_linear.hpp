@@ -2,8 +2,7 @@
 #pragma once
 #include <sycl/sycl.hpp>
 
-// Assume AVX-512 vector size (8x64 bits = 512 bits)
-constexpr int VEC_SIZE = 8; 
+constexpr int VEC_SIZE = 4;
 
 class FusedBinaryLinear; // Forward declaration for kernel naming
 
@@ -48,8 +47,7 @@ void launch_binary_linear_fused(
                 sycl::vec<uint64_t, VEC_SIZE> pops = sycl::popcount(xnor_v);
                 
                 // Horizontal reduction (Sum the 8 popcounts)
-                popcount_sum += pops.s0() + pops.s1() + pops.s2() + pops.s3() + 
-                                pops.s4() + pops.s5() + pops.s6() + pops.s7();
+                popcount_sum += pops.s0() + pops.s1() + pops.s2() + pops.s3();
             }
 
             // Scalar tail loop (if in_int64s is not a multiple of 8)
