@@ -2,16 +2,27 @@
 #include "kernel_linear_server.hpp" 
 #include <torch/extension.h>
 
-// 1. THE HARDWARE SINGLETON
-// This guarantees the hardware is only probed ONCE, and the queue stays hot forever.
-sycl::queue& get_queue() {
-    // You can swap this to sycl::cpu_selector_v or sycl::gpu_selector_v to force a specific device
+// 1. DUAL HARDWARE SINGLETONS
+sycl::queue& get_cpu_queue() {
+    static sycl::queue q{sycl::cpu_selector_v}; 
+    return q;
+}
+
+sycl::queue& get_gpu_queue() {
+    // Falls back to CPU if no GPU is found to prevent crashing
     static sycl::queue q{sycl::default_selector_v}; 
     return q;
 }
 
-// 2. IN-PLACE DEVICE ENGINE
-// Notice we don't return a Tensor. We pass 'outputs' IN as an argument.
+// 2. INTELLIGENT DISPATCHER
+sycl::queue& get_queue_for_tensor(const at::Tensor& t) {
+    if (t.device().is_cpu()) {
+        return get_cpu_queue();
+    } else {
+        return get_gpu_queue();
+    }
+}
+
 void bnn_linear_forward_device_out(at::Tensor inputs, at::Tensor weights, at::Tensor thresholds, at::Tensor outputs) {
     TORCH_CHECK(inputs.dim() == 2, "Inputs must be 2D");
     TORCH_CHECK(weights.dim() == 2, "Weights must be 2D");
@@ -21,8 +32,11 @@ void bnn_linear_forward_device_out(at::Tensor inputs, at::Tensor weights, at::Te
     int in_int64s = inputs.size(1); 
     int out_features = weights.size(0);
 
+    // Automatically route to CPU or GPU based on the PyTorch Tensor!
+    sycl::queue& q = get_queue_for_tensor(inputs);
+
     launch_binary_linear_fused(
-        get_queue(),
+        q,
         reinterpret_cast<const uint64_t*>(inputs.data_ptr<int64_t>()),
         reinterpret_cast<const uint64_t*>(weights.data_ptr<int64_t>()),
         reinterpret_cast<const int32_t*>(thresholds.data_ptr<int32_t>()),
@@ -30,10 +44,9 @@ void bnn_linear_forward_device_out(at::Tensor inputs, at::Tensor weights, at::Te
         batch_size, in_int64s, out_features
     );
     
-    get_queue().wait(); // Synchronize before returning to Python
+    q.wait(); 
 }
 
-// 3. IN-PLACE SERVER ENGINE
 void bnn_linear_forward_server_out(at::Tensor inputs, at::Tensor weights, at::Tensor thresholds, at::Tensor outputs) {
     TORCH_CHECK(inputs.dim() == 2, "Inputs must be 2D");
     
@@ -41,8 +54,10 @@ void bnn_linear_forward_server_out(at::Tensor inputs, at::Tensor weights, at::Te
     int in_int64s = inputs.size(1); 
     int out_features = weights.size(0);
 
+    sycl::queue& q = get_queue_for_tensor(inputs);
+
     launch_binary_linear_server(
-        get_queue(),
+        q,
         reinterpret_cast<const uint64_t*>(inputs.data_ptr<int64_t>()),
         reinterpret_cast<const uint64_t*>(weights.data_ptr<int64_t>()),
         reinterpret_cast<const int32_t*>(thresholds.data_ptr<int32_t>()),
@@ -50,7 +65,7 @@ void bnn_linear_forward_server_out(at::Tensor inputs, at::Tensor weights, at::Te
         batch_size, in_int64s, out_features
     );
     
-    get_queue().wait();
+    q.wait();
 }
 
 PYBIND11_MODULE(bnn_pytorch_ext, m) {
