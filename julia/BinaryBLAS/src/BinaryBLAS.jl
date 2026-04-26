@@ -1,6 +1,10 @@
 module BinaryBLAS
 
-export print_hardware_info, linear_forward_device!, conv2d_nhwc_device!, pack_fp32_to_uint64!
+export print_hardware_info,
+    linear_forward_device!,
+    conv2d_nhwc_device!,
+    pack_fp32_to_uint64!,
+    maxpool2d_nhwc_device!
 
 const LIB_PATH = joinpath(@__DIR__,"..", "..", "..", "bnn_engine", "build", "libbnn_engine.so")
 
@@ -109,6 +113,33 @@ function pack_fp32_to_uint64!(output::Array{UInt64, 4}, input::Array{Float32, 4}
     )::Cvoid
     
     return output
+end
+
+"""
+    maxpool2d_nhwc_device!(outputs, inputs; kernel_size=2, stride=2)
+
+Performs in-place 2x2 BNN MaxPool using Bitwise OR.
+Layout: (Channels_int64s, W, H, Batch)
+"""
+function maxpool2d_nhwc_device!(
+    outputs::Array{UInt64, 4}, inputs::Array{UInt64, 4};
+    kernel_size::Int = 2, stride::Int = 2
+)
+    channels_int64 = size(inputs, 1)
+    in_w = size(inputs, 2)
+    in_h = size(inputs, 3)
+    batch_size = size(inputs, 4)
+
+    @assert size(outputs, 1) == channels_int64 "Output channel dimension mismatch"
+    @assert size(outputs, 4) == batch_size "Output batch size mismatch"
+
+    @ccall LIB_PATH.c_api_bnn_maxpool2d_nhwc_device_out(
+        pointer(inputs)::Ptr{UInt64}, pointer(outputs)::Ptr{UInt64}, 
+        batch_size::Cint, channels_int64::Cint,
+        in_h::Cint, in_w::Cint, kernel_size::Cint, stride::Cint
+    )::Cvoid
+    
+    return outputs
 end
 
 end # module
