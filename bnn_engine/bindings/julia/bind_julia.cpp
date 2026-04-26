@@ -1,6 +1,7 @@
 #include "kernel_linear.hpp"
 #include "kernel_linear_server.hpp"
 #include "kernel_conv2d_nhwc.hpp"
+#include "kernel_maxpool2d_nhwc.hpp"
 #include "kernel_pack.hpp"
 #include <sycl/sycl.hpp>
 #include <iostream>
@@ -67,5 +68,17 @@ extern "C" {
         launch_binarize_pack_nhwc(get_queue(), input, output, batch_size, spatial_size, channels);
         get_queue().wait();
     }
+
+    // IN-PLACE NHWC MAXPOOL2D
+    void c_api_bnn_maxpool2d_nhwc_device_out(
+        const uint64_t* inputs, uint64_t* outputs, 
+        int batch_size, int channels_int64,
+        int in_h, int in_w, int kernel_size, int stride) 
+    {
+        launch_binary_maxpool2d_nhwc(get_queue(), inputs, outputs, 
+                                     batch_size, channels_int64, 
+                                     in_h, in_w, kernel_size, stride);
+        get_queue().wait();
+    }   
 
 }

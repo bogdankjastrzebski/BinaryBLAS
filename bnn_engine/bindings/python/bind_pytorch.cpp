@@ -1,6 +1,6 @@
 #include "kernel_linear.hpp"
 #include "kernel_linear_server.hpp" 
-#include "kernel_maxpool.hpp"
+#include "kernel_maxpool2d_nhwc.hpp"
 #include "kernel_pack.hpp"
 #include "kernel_conv2d_nhwc.hpp"
 #include <torch/extension.h>
@@ -81,7 +81,7 @@ void bnn_maxpool2d_device_out(at::Tensor inputs, at::Tensor outputs, int kernel_
 
     sycl::queue& q = get_queue_for_tensor(inputs);
 
-    launch_binary_maxpool2d(
+    launch_binary_maxpool2d_nhwc(
         q,
         reinterpret_cast<const uint64_t*>(inputs.data_ptr<int64_t>()),
         reinterpret_cast<uint64_t*>(outputs.data_ptr<int64_t>()),
