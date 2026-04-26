@@ -4,7 +4,7 @@
 
 constexpr int VEC_SIZE = 4;
 
-class FusedBinaryLinear; // Forward declaration for kernel naming
+class FusedBinaryLinearTransposed; // Renamed for clarity
 
 void launch_binary_linear_fused(
     sycl::queue& q,
@@ -16,54 +16,53 @@ void launch_binary_linear_fused(
     int in_int64s,              // Number of uint64_t per input feature
     int out_features)           // Total number of output neurons
 {
-    int out_int64s = (out_features + 63) / 64; // Ceiling division
+    int out_int64s = (out_features + 63) / 64; 
 
-    q.parallel_for<FusedBinaryLinear>(sycl::range<1>(batch_size), [=](sycl::id<1> idx) {
-        int batch_idx = idx[0];
+    // --- THE FIX: The Transposed Grid ---
+    // Dimension 0: Output Blocks (Slow moving)
+    // Dimension 1: Batch Size (Fast moving -> Executes simultaneously in SIMD lanes)
+    sycl::range<2> global_range(out_int64s, batch_size);
+
+    q.parallel_for<FusedBinaryLinearTransposed>(global_range, [=](sycl::id<2> idx) {
+        int out_block = idx[0];
+        int b = idx[1];
+
+        uint64_t packed_out = 0;
         
-        // Pointers for this specific batch
-        const uint64_t* my_input = &inputs[batch_idx * in_int64s];
-        uint64_t* my_output = &outputs[batch_idx * out_int64s];
+        int start_out_idx = out_block * 64;
+        int end_out_idx = (start_out_idx + 64 > out_features) ? out_features : (start_out_idx + 64);
 
-        // Iterate over output features (neurons)
-        for (int out_idx = 0; out_idx < out_features; ++out_idx) {
-            const uint64_t* my_weights = &weights[out_idx * in_int64s];
+        // All threads in this SIMD lane will loop over this exact same chunk of weights
+        for (int out_idx = start_out_idx; out_idx < end_out_idx; ++out_idx) {
+            
             int popcount_sum = 0;
+            const uint64_t* my_input = &inputs[b * in_int64s];
+            const uint64_t* my_weights = &weights[out_idx * in_int64s]; // <--- Broadcast Read!
 
-            // --- The AVX-512 Core Loop ---
-            // Process 512 bits (VEC_SIZE * 64) per iteration
             int i = 0;
             for (; i <= in_int64s - VEC_SIZE; i += VEC_SIZE) {
-                sycl::vec<uint64_t, VEC_SIZE> in_v;
-                sycl::vec<uint64_t, VEC_SIZE> w_v;
+                sycl::vec<uint64_t, VEC_SIZE> in_v, w_v;
                 
                 in_v.load(0, sycl::multi_ptr<const uint64_t, sycl::access::address_space::global_space>(my_input + i));
                 w_v.load(0, sycl::multi_ptr<const uint64_t, sycl::access::address_space::global_space>(my_weights + i));
 
-                // XNOR
                 sycl::vec<uint64_t, VEC_SIZE> xnor_v = ~(in_v ^ w_v);
-                
-                // Vectorized Popcount
                 sycl::vec<uint64_t, VEC_SIZE> pops = sycl::popcount(xnor_v);
-                
-                // Horizontal reduction (Sum the 8 popcounts)
                 popcount_sum += pops.s0() + pops.s1() + pops.s2() + pops.s3();
             }
 
-            // Scalar tail loop (if in_int64s is not a multiple of 8)
             for (; i < in_int64s; ++i) {
                 popcount_sum += sycl::popcount(~(my_input[i] ^ my_weights[i]));
             }
 
-            // --- Fusion: Threshold & Pack ---
-            uint64_t bit = (popcount_sum > thresholds[out_idx]) ? 1ULL : 0ULL;
-            
-            int out_pack_idx = out_idx / 64;
-            int bit_pos = out_idx % 64;
-
-            // Write the bit to the correct position
-            if (bit_pos == 0) my_output[out_pack_idx] = 0; // Initialize new block
-            my_output[out_pack_idx] |= (bit << bit_pos);
+            if (popcount_sum > thresholds[out_idx]) {
+                int bit_pos = out_idx % 64;
+                packed_out |= (1ULL << bit_pos);
+            }
         }
-    }).wait(); // For profiling, we block. In production, remove .wait() for async.
+
+        // Write safely to separate cache lines (No False Sharing)
+        outputs[b * out_int64s + out_block] = packed_out;
+
+    }).wait(); 
 }

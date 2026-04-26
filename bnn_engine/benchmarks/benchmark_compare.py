@@ -10,9 +10,9 @@ import bnn_pytorch_ext
 
 def main():
     # 1. Define the Logical Network Shape
-    batch_size = 1024
-    in_features = 1024 
-    out_features = 1024
+    batch_size = 1
+    in_features = 4096 
+    out_features = 4096
     
     print(f"--- BNN vs PyTorch Head-to-Head ---")
     print(f"Matrix: {batch_size}x{in_features} -> {out_features}")
