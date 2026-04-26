@@ -1,0 +1,10 @@
+name = "BinaryBLAS"
+uuid = "a0e9f528-0d08-4b3b-b95a-dda08b0501b8"
+version = "0.1.0"
+authors = ["bogdankjastrzebski <bogdan.k.jastrzebski@gmail.com>"]
+
+[deps]
+NNlib = "872c559c-99b0-510c-b3b7-b6c96a88d5cd"
+
+[compat]
+NNlib = "0.9.34"
